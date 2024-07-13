@@ -24,7 +24,7 @@
 #endif
 
 #include <windows.h>
-#include"fix_winnt.h"
+//#include"fix_winnt.h"
 #include <wininet.h>
 #include <netlistmgr.h>
 #include <stdio.h>

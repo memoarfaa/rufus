@@ -325,6 +325,7 @@ INT_PTR CALLBACK LicenseCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 	HWND hLicense;
 	switch (message) {
 	case WM_INITDIALOG:
+		InitDarkMode(hDlg);
 		hLicense = GetDlgItem(hDlg, IDC_LICENSE_TEXT);
 		apply_localization(IDD_LICENSE, hDlg);
 		CenterDialog(hDlg, NULL);
@@ -338,6 +339,8 @@ INT_PTR CALLBACK LicenseCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 		SetWindowLongPtr(hLicense, GWL_STYLE, style);
 		SetDlgItemTextA(hDlg, IDC_LICENSE_TEXT, gplv3);
 		break;
+	case WM_SETTINGCHANGE:
+		return OnSettingChange(hDlg, message, wParam, lParam);
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
 		case IDOK:
@@ -369,6 +372,7 @@ INT_PTR CALLBACK AboutCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM lP
 
 	switch (message) {
 	case WM_INITDIALOG:
+		InitDarkMode(hDlg);
 		resized_already = FALSE;
 		// Execute dialog localization
 		apply_localization(IDD_ABOUTBOX, hDlg);
@@ -404,6 +408,8 @@ INT_PTR CALLBACK AboutCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM lP
 		SendMessage(hEdit[1], EM_SETSEL, 0, 0);
 		SendMessage(hEdit[0], EM_REQUESTRESIZE, 0, 0);
 		break;
+	case WM_SETTINGCHANGE:
+		return OnSettingChange(hDlg, message, wParam, lParam);
 	case WM_NOTIFY:
 		switch (((LPNMHDR)lParam)->code) {
 		case EN_REQUESTRESIZE:
@@ -475,6 +481,7 @@ INT_PTR CALLBACK NotificationCallback(HWND hDlg, UINT message, WPARAM wParam, LP
 
 	switch (message) {
 	case WM_INITDIALOG:
+		InitDarkMode(hDlg);
 		// Get the system message box font. See http://stackoverflow.com/a/6057761
 		ncm.cbSize = sizeof(ncm);
 		// If we're compiling with the Vista SDK or later, the NONCLIENTMETRICS struct
@@ -556,6 +563,8 @@ INT_PTR CALLBACK NotificationCallback(HWND hDlg, UINT message, WPARAM wParam, LP
 			ResizeMoveCtrl(hDlg, GetDlgItem(hDlg, IDNO), 0, dh -cbh, 0, 0, 1.0f);
 		}
 		return (INT_PTR)TRUE;
+	case WM_SETTINGCHANGE:
+		return OnSettingChange(hDlg, message, wParam, lParam);
 	case WM_CTLCOLORSTATIC:
 		// Change the background colour for static text and icon
 		SetBkMode((HDC)wParam, TRANSPARENT);
@@ -680,6 +689,7 @@ static INT_PTR CALLBACK CustomSelectionCallback(HWND hDlg, UINT message, WPARAM 
 
 	switch (message) {
 	case WM_INITDIALOG:
+		InitDarkMode(hDlg);
 		// Don't overflow our max radio button
 		if (nDialogItems > (IDC_SELECTION_CHOICEMAX - IDC_SELECTION_CHOICE1 + 1)) {
 			uprintf("Warning: Too many options requested for Selection (%d vs %d)",
@@ -785,6 +795,8 @@ static INT_PTR CALLBACK CustomSelectionCallback(HWND hDlg, UINT message, WPARAM 
 		for (i = 0, m = 1; i < nDialogItems; i++, m <<= 1)
 			Button_SetCheck(GetDlgItem(hDlg, IDC_SELECTION_CHOICE1 + i), (m & selection_dialog_mask) ? BST_CHECKED : BST_UNCHECKED);
 		return (INT_PTR)TRUE;
+		case WM_SETTINGCHANGE:
+			return OnSettingChange(hDlg, message, wParam, lParam);
 	case WM_CTLCOLORSTATIC:
 		// Change the background colour for static text and icon
 		SetBkMode((HDC)wParam, TRANSPARENT);
@@ -868,6 +880,7 @@ INT_PTR CALLBACK ListCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
 
 	switch (message) {
 	case WM_INITDIALOG:
+		InitDarkMode(hDlg);
 		// Don't overflow our max radio button
 		if (nDialogItems > (IDC_LIST_ITEMMAX - IDC_LIST_ITEM1 + 1)) {
 			uprintf("Warning: Too many items requested for List (%d vs %d)",
@@ -924,7 +937,10 @@ INT_PTR CALLBACK ListCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
 		ResizeMoveCtrl(hDlg, GetDlgItem(hDlg, IDCANCEL), 0, dh, 0, 0, 1.0f);
 		ResizeButtonHeight(hDlg, IDOK);
 		ResizeButtonHeight(hDlg, IDCANCEL);
+		
 		return (INT_PTR)TRUE;
+	case WM_SETTINGCHANGE:
+		return OnSettingChange(hDlg, message, wParam, lParam);
 	case WM_CTLCOLORSTATIC:
 		// Change the background colour for static text and icon
 		SetBkMode((HDC)wParam, TRANSPARENT);
@@ -988,6 +1004,9 @@ INT_PTR CALLBACK TooltipCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 		return (INT_PTR)FALSE;
 
 	switch (message) {
+	case WM_NCPAINT:
+		SendMessageW(ttlist[i].hTip, TTM_SETWINDOWTHEME, 0, IsAppsUseDarkMode() ? ((LPARAM)&L"DarkMode_Explorer") : ((LPARAM)&L"Explorer"));
+		return CallWindowProc(ttlist[i].original_proc, hDlg, message, wParam, lParam);
 	case WM_NOTIFY:
 		switch (((LPNMHDR)lParam)->code) {
 		case TTN_GETDISPINFOW:
@@ -1271,6 +1290,7 @@ INT_PTR CALLBACK UpdateCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 
 	switch (message) {
 	case WM_INITDIALOG:
+		InitDarkMode(hDlg);
 		resized_already = FALSE;
 		hUpdatesDlg = hDlg;
 		apply_localization(IDD_UPDATE_POLICY, hDlg);
@@ -1318,7 +1338,10 @@ INT_PTR CALLBACK UpdateCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 		SendMessage(hPolicy, EM_SETEVENTMASK, 0, ENM_LINK|ENM_REQUESTRESIZE);
 		SendMessageA(hPolicy, EM_SETBKGNDCOLOR, 0, (LPARAM)GetSysColor(COLOR_BTNFACE));
 		SendMessage(hPolicy, EM_REQUESTRESIZE, 0, 0);
+		
 		break;
+	case WM_SETTINGCHANGE:
+		return OnSettingChange(hDlg, message, wParam, lParam);
 	case WM_NOTIFY:
 		if ((((LPNMHDR)lParam)->code == EN_REQUESTRESIZE) && (!resized_already)) {
 			resized_already = TRUE;
@@ -1544,6 +1567,7 @@ INT_PTR CALLBACK NewVersionCallback(HWND hDlg, UINT message, WPARAM wParam, LPAR
 
 	switch (message) {
 	case WM_INITDIALOG:
+		InitDarkMode(hDlg);
 		apply_localization(IDD_NEW_VERSION, hDlg);
 		download_status = 0;
 		SetTitleBarIcon(hDlg);
@@ -1830,6 +1854,7 @@ HWND MyCreateDialog(HINSTANCE hInstance, int Dialog_ID, HWND hWndParent, DLGPROC
 	assert(rcTemplate != NULL);
 	HWND hDlg = CreateDialogIndirect(hInstance, rcTemplate, hWndParent, lpDialogFunc);
 	safe_free(rcTemplate);
+	
 	return hDlg;
 }
 
@@ -2024,6 +2049,7 @@ INT_PTR CALLBACK SelectionDynCallback(HWND hwndDlg, UINT message, WPARAM wParam,
 	int r = -1;
 	switch (message) {
 	case WM_INITDIALOG:
+
 		return (INT_PTR)TRUE;
 
 	case WM_COMMAND:
@@ -2136,10 +2162,10 @@ int SelectionDyn(char* title, char* message, char** szChoice, int nChoices)
 		nchar = MultiByteToWideChar(CP_UTF8, 0, szChoice[i], -1, lpwsz, 150);
 		lpw += nchar;
 		*lpw++ = 0;
-	}
-
-	ret = (int)DialogBoxIndirect(hMainInstance, (LPDLGTEMPLATE)lpdt, hMainDialog, (DLGPROC)SelectionDynCallback);
+	}PLATE)lpdt, hMainDialog, (DLGPROC)SelectionDynCallback);
 	free(lpdt);
 	return ret;
 }
+
+	ret = (int)DialogBoxIndirect(hMainInstance, (LPDLGTEM
 #endif

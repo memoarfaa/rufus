@@ -20,11 +20,42 @@
 #include <windows.h>
 #include <stdint.h>
 #include "resource.h"
-#include "localization.h"
+#include "localization.h"rufus.com
 
+#include<Uxtheme.h>
+#include<vsstyle.h>
+#include <vssym32.h>
+#include <Richedit.h>
 #pragma once
 
-// Progress bar colors
+
+//typedef struct _MYITEM
+//{
+//	HMENU hMenu;
+//	int itemId;
+//	BOOL isSeparator;
+//} MYITEM;             // structure for item font and string  
+//
+//MYITEM* pmyitem;      // pointer to item's font and string        
+//static MYITEM myitem;   // array of MYITEMS
+
+typedef enum _CaptionButton
+{
+	Close = 1,
+	Maximize = 2,
+	Minimize = 3
+}CaptionButton;
+
+typedef enum _ButtonState
+{
+	Normal = 1,
+	Hot = 2,
+	Pressed = 3,
+	Disabled = 4
+}ButtonState1;
+
+
+ // Progress bar colors
 #define PROGRESS_BAR_NORMAL_TEXT_COLOR		RGB(0x00, 0x00, 0x00)
 #define PROGRESS_BAR_INVERTED_TEXT_COLOR	RGB(0xFF, 0xFF, 0xFF)
 #define PROGRESS_BAR_BACKGROUND_COLOR		RGB(0xE6, 0xE6, 0xE6)
@@ -33,8 +64,19 @@
 #define PROGRESS_BAR_PAUSED_COLOR			RGB(0xDA, 0xCB, 0x26)
 #define PROGRESS_BAR_ERROR_COLOR			RGB(0xDA, 0x26, 0x26)
 
-// Toolbar icons main color
-#define TOOLBAR_ICON_COLOR					RGB(0x29, 0x80, 0xB9)
+#define PROGRESS_BAR_DARK_NORMAL_TEXT_COLOR		RGB(0xFF, 0xFF, 0xFF)
+#define PROGRESS_BAR_DARK_INVERTED_TEXT_COLOR	RGB(0x00, 0x00, 0x00)
+#define PROGRESS_BAR_DARK_BACKGROUND_COLOR		RGB(0x3F, 0x3F, 0x3F)
+#define PROGRESS_BAR_DARK_BOX_COLOR				RGB(192, 192,192)
+#define PROGRESS_BAR_DARK_NORMAL_COLOR			RGB(40,100,180)
+#define PROGRESS_BAR_DARK_PAUSED_COLOR			RGB(0xDA, 0xCB, 0x26)
+#define PROGRESS_BAR_DARK_ERROR_COLOR			RGB(0xDA, 0x26, 0x26)
+#define ColorControlDark                        RGB(32, 32, 32)
+#define ActiveCaptionColor RGB(63, 63, 63)
+#define InActiveCaptionColor RGB(100, 100, 100)
+
+#define TOOLBAR_ICON_COLOR				RGB(255, 255, 255)	//(0x29, 0x80, 0xB9)
+
 
 // Toolbar default style
 #define TOOLBAR_STYLE						( WS_CHILD | WS_TABSTOP | WS_VISIBLE | \
@@ -82,7 +124,7 @@ extern const char *sfd_name, *flash_type[BADLOCKS_PATTERN_TYPES];
 extern char *short_image_path, image_option_txt[128];
 extern int advanced_device_section_height, advanced_format_section_height, persistence_unit_selection;
 extern int selection_default, cbw, ddw, ddbh, bh, update_progress_type;
-
+extern int ButtonState;
 extern void SetAccessibleName(HWND hCtrl, const char* name);
 extern void SetComboEntry(HWND hDlg, int data);
 extern void GetBasicControlsWidth(HWND hDlg);
@@ -106,3 +148,21 @@ extern void ShowLanguageMenu(RECT rcExclude);
 extern void SetPassesTooltip(void);
 extern void SetBootTypeDropdownWidth(void);
 extern void OnPaint(HDC hdc);
+extern void MakeBitmapOpaque(HDC hdc, RECT lpRECT);
+extern void OnButtonPaint(HWND hWnd, HDC hdc, int state);
+extern BOOL IsAppsUseDarkMode(void);
+extern void SetMenuOwnerDrawn(HMENU hMenu);
+extern void RemoveMenuOwnerDrawn(HMENU hmenu);
+extern void InitDarkMode(HWND hDlg);
+extern BOOL CALLBACK ThemeCallback(HWND hWnd, LPARAM lParam);
+extern LRESULT CALLBACK ButtonSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR idSubclass, DWORD_PTR dwRefData);
+extern LRESULT CALLBACK OnNcPaint(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+extern LRESULT CALLBACK OnNcCalcSize(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+extern LRESULT CALLBACK OnCtlColor(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+extern LRESULT CALLBACK OnSettingChange(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+extern LRESULT CALLBACK OnShowWindow(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+extern LRESULT CALLBACK DlgSubclassProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR idSubclass, DWORD_PTR dwRefData);
+extern void DrawMenu(DRAWITEMSTRUCT* dis);
+extern LRESULT OnDrawItem(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+extern LRESULT OnMeasureItem(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+extern HMENU hMenu;

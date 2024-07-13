@@ -31,16 +31,17 @@
 #include <oleacc.h>
 #include <winioctl.h>
 #include <assert.h>
-
 #include "rufus.h"
 #include "drive.h"
 #include "missing.h"
 #include "resource.h"
 #include "msapi_utf8.h"
 #include "localization.h"
-
 #include "ui.h"
 #include "ui_data.h"
+#include <dwmapi.h>
+
+
 
 UINT_PTR UM_LANGUAGE_MENU_MAX = UM_LANGUAGE_MENU;
 HIMAGELIST hUpImageList, hDownImageList;
@@ -49,6 +50,8 @@ extern int imop_win_sel;
 extern char *unattend_xml_path, *archive_path;
 int update_progress_type = UPT_PERCENT;
 int advanced_device_section_height, advanced_format_section_height;
+int ButtonState = 1;
+int NcButtonState = 0;
 // (empty) check box width, (empty) drop down width, button height (for and without dropdown match)
 int cbw, ddw, ddbh = 0, bh = 0;
 // Row Height, DropDown Height, Main button width, half dropdown width, full dropdown width
@@ -58,7 +61,13 @@ static int sw, mw, bsw, sbw, ssw, tw, dbw;
 static WNDPROC progress_original_proc = NULL;
 static wchar_t wtbtext[2][128];
 static IAccPropServices* pfaps = NULL;
-
+static TRACKMOUSEEVENT tme;
+HMENU menu;
+HMENU hMenu;
+static BOOL CloseHitTest = FALSE;
+static BOOL MaxHitTest = FALSE;
+static BOOL MinHitTest = FALSE;
+static BOOL IsNcActive = FALSE;
 /*
  * The following is used to allocate slots within the progress bar
  * 0 means unused (no operation or no progress allocated to it)
@@ -893,14 +902,20 @@ static INT_PTR CALLBACK ProgressCallback(HWND hCtrl, UINT message, WPARAM wParam
 	wchar_t winfo[128];
 	static BOOL marquee_mode = FALSE;
 	static uint32_t pos = 0, min = 0, max = 0xFFFF;
-	static COLORREF color = PROGRESS_BAR_NORMAL_COLOR;
+	BOOL isDark = IsAppsUseDarkMode();
+	COLORREF normalColor = isDark ? PROGRESS_BAR_DARK_NORMAL_COLOR : PROGRESS_BAR_NORMAL_COLOR;
+	COLORREF backgroundColor = isDark ? PROGRESS_BAR_DARK_BACKGROUND_COLOR : PROGRESS_BAR_BACKGROUND_COLOR;
+	COLORREF normalTextColor = isDark ? PROGRESS_BAR_DARK_NORMAL_TEXT_COLOR : PROGRESS_BAR_NORMAL_TEXT_COLOR;
+	COLORREF invertedlTextColor = isDark ? PROGRESS_BAR_DARK_INVERTED_TEXT_COLOR : PROGRESS_BAR_INVERTED_TEXT_COLOR;
+	COLORREF boxColor = isDark ? PROGRESS_BAR_DARK_BOX_COLOR : PROGRESS_BAR_BOX_COLOR;
+	COLORREF color = normalColor;
 
 	switch (message) {
 
 	case PBM_SETSTATE:
 		switch (wParam) {
 		case PBST_NORMAL:
-			color = PROGRESS_BAR_NORMAL_COLOR;
+			color = normalColor;
 			break;
 		case PBST_PAUSED:
 			color = PROGRESS_BAR_PAUSED_COLOR;
@@ -930,10 +945,11 @@ static INT_PTR CALLBACK ProgressCallback(HWND hCtrl, UINT message, WPARAM wParam
 		if ((wParam == TRUE) && (!marquee_mode)) {
 			marquee_mode = TRUE;
 			pos = min;
-			color = PROGRESS_BAR_NORMAL_COLOR;
+			color = normalColor;
 			SetTimer(hCtrl, TID_MARQUEE_TIMER, MARQUEE_TIMER_REFRESH, NULL);
 			InvalidateRect(hProgress, NULL, TRUE);
-		} else if ((wParam == FALSE) && (marquee_mode)) {
+		}
+		else if ((wParam == FALSE) && (marquee_mode)) {
 			marquee_mode = FALSE;
 			KillTimer(hCtrl, TID_MARQUEE_TIMER);
 			pos = min;
@@ -971,7 +987,7 @@ static INT_PTR CALLBACK ProgressCallback(HWND hCtrl, UINT message, WPARAM wParam
 			// Optional first segment
 			if (pos + ((max - min) / 5) > max) {
 				rc.right = MulDiv(pos + ((max - min) / 5) - max, rc.right, max - min);
-				SetTextColor(hDC, PROGRESS_BAR_INVERTED_TEXT_COLOR);
+				SetTextColor(hDC, invertedlTextColor);
 				SetBkColor(hDC, color);
 				ExtTextOut(hDC, (full_right - size.cx) / 2, (rc.bottom - size.cy) / 2,
 					ETO_CLIPPED | ETO_OPAQUE | ETO_NUMERICSLOCAL, &rc, winfo, (int)wcslen(winfo), NULL);
@@ -981,8 +997,8 @@ static INT_PTR CALLBACK ProgressCallback(HWND hCtrl, UINT message, WPARAM wParam
 			// Optional second segment
 			if (pos > min) {
 				rc.right = MulDiv(pos - min, rc.right, max - min);
-				SetTextColor(hDC, PROGRESS_BAR_NORMAL_TEXT_COLOR);
-				SetBkColor(hDC, PROGRESS_BAR_BACKGROUND_COLOR);
+				SetTextColor(hDC, normalTextColor);
+				SetBkColor(hDC, backgroundColor);
 				ExtTextOut(hDC, (full_right - size.cx) / 2, (rc.bottom - size.cy) / 2,
 					ETO_CLIPPED | ETO_OPAQUE | ETO_NUMERICSLOCAL, &rc, winfo, (int)wcslen(winfo), NULL);
 				rc.left = rc.right;
@@ -990,14 +1006,15 @@ static INT_PTR CALLBACK ProgressCallback(HWND hCtrl, UINT message, WPARAM wParam
 			}
 			// Second to last segment
 			rc.right = MulDiv(pos - min + ((max - min) / 5), rc.right, max - min);
-			SetTextColor(hDC, PROGRESS_BAR_INVERTED_TEXT_COLOR);
+			SetTextColor(hDC, invertedlTextColor);
 			SetBkColor(hDC, color);
 			ExtTextOut(hDC, (full_right - size.cx) / 2, (rc.bottom - size.cy) / 2,
 				ETO_CLIPPED | ETO_OPAQUE | ETO_NUMERICSLOCAL, &rc, winfo, (int)wcslen(winfo), NULL);
-		} else {
+		}
+		else {
 			// First segment
 			rc.right = (pos > min) ? MulDiv(pos - min, rc.right, max - min) : rc.left;
-			SetTextColor(hDC, PROGRESS_BAR_INVERTED_TEXT_COLOR);
+			SetTextColor(hDC, invertedlTextColor);
 			SetBkColor(hDC, color);
 			ExtTextOut(hDC, (full_right - size.cx) / 2, (rc.bottom - size.cy) / 2,
 				ETO_CLIPPED | ETO_OPAQUE | ETO_NUMERICSLOCAL, &rc, winfo, (int)wcslen(winfo), NULL);
@@ -1005,12 +1022,12 @@ static INT_PTR CALLBACK ProgressCallback(HWND hCtrl, UINT message, WPARAM wParam
 		// Last segment
 		rc.left = rc.right;
 		rc.right = full_right;
-		SetTextColor(hDC, PROGRESS_BAR_NORMAL_TEXT_COLOR);
-		SetBkColor(hDC, PROGRESS_BAR_BACKGROUND_COLOR);
+		SetTextColor(hDC, normalTextColor);
+		SetBkColor(hDC, backgroundColor);
 		ExtTextOut(hDC, (full_right - size.cx) / 2, (rc.bottom - size.cy) / 2,
 			ETO_CLIPPED | ETO_OPAQUE | ETO_NUMERICSLOCAL, &rc, winfo, (int)wcslen(winfo), NULL);
 		// Bounding rectangle
-		SetDCPenColor(hDC, PROGRESS_BAR_BOX_COLOR);
+		SetDCPenColor(hDC, boxColor);
 		Rectangle(hDC, rc2.left, rc2.top, rc2.right, rc2.bottom);
 		EndPaint(hCtrl, &ps);
 		return (INT_PTR)TRUE;
@@ -1018,6 +1035,7 @@ static INT_PTR CALLBACK ProgressCallback(HWND hCtrl, UINT message, WPARAM wParam
 
 	return CallWindowProc(progress_original_proc, hCtrl, message, wParam, lParam);
 }
+
 
 void CreateAdditionalControls(HWND hDlg)
 {
@@ -1060,8 +1078,19 @@ void CreateAdditionalControls(HWND hDlg)
 		hIconDown = (HICON)LoadImage(hDll, MAKEINTRESOURCE(16750), IMAGE_ICON, s16, s16, LR_DEFAULTCOLOR | LR_SHARED);
 	hUpImageList = ImageList_Create(i16, i16, ILC_COLOR32 | ILC_HIGHQUALITYSCALE, 1, 0);
 	hDownImageList = ImageList_Create(i16, i16, ILC_COLOR32 | ILC_HIGHQUALITYSCALE, 1, 0);
-	ImageList_AddIcon(hUpImageList, hIconUp);
-	ImageList_AddIcon(hDownImageList, hIconDown);
+	if (!IsAppsUseDarkMode())
+	{
+		ImageList_AddIcon(hUpImageList, hIconUp);
+		ImageList_AddIcon(hDownImageList, hIconDown);
+	}
+	else
+	{
+		//HBITMAP bitab = LoadBitmap(0, MAKEINTRESOURCE(32753);
+		HBITMAP hbm = (HBITMAP)LoadImage(0, MAKEINTRESOURCE(32753), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+		//ReplaceColor(100, RGB(204, 204, 204), RGB(32, 32, 32), hbm);
+		ImageList_AddMasked(hUpImageList, hbm, CLR_DEFAULT);
+		ImageList_AddMasked(hDownImageList, LoadBitmap(0, MAKEINTRESOURCE(32752)), CLR_DEFAULT);
+	}
 
 	// Create the advanced options toolbars
 	memset(wtbtext, 0, sizeof(wtbtext));
@@ -1133,12 +1162,15 @@ void CreateAdditionalControls(HWND hDlg)
 			tbToolbarButtons[i].fsStyle = BTNS_BUTTON;
 			tbToolbarButtons[i].fsState = TBSTATE_ENABLED;
 			tbToolbarButtons[i].iBitmap = bitmaps_list[i / 2];
-		} else {
+		}
+		else {
 			tbToolbarButtons[i].fsStyle = BTNS_AUTOSIZE;
 			tbToolbarButtons[i].fsState = TBSTATE_INDETERMINATE;
 			tbToolbarButtons[i].iBitmap = I_IMAGENONE;
 			tbToolbarButtons[i].iString = (fScale < 1.5f) ? (INT_PTR)L"" : (INT_PTR)L" ";
 		}
+
+		
 	}
 	SendMessage(hMultiToolbar, TB_ADDBUTTONS, (WPARAM)i, (LPARAM)&tbToolbarButtons);
 	SendMessage(hMultiToolbar, TB_SETBUTTONSIZE, 0, MAKELPARAM(i16, ddbh));
@@ -1509,7 +1541,7 @@ void _UpdateProgressWithInfo(int op, int msg, uint64_t processed, uint64_t total
 void ShowLanguageMenu(RECT rcExclude)
 {
 	TPMPARAMS tpm;
-	HMENU menu;
+	
 	RECT rc;
 	LONG nb_items = 1, adjust = 0;
 	loc_cmd* lcmd = NULL;
@@ -1532,6 +1564,10 @@ void ShowLanguageMenu(RECT rcExclude)
 		}
 		InsertMenuU(menu, -1, MF_BYPOSITION | ((selected_locale == lcmd) ? MF_CHECKED : 0), UM_LANGUAGE_MENU_MAX++, lang);
 		nb_items++;
+		if (IsAppsUseDarkMode())
+		{
+			SetMenuOwnerDrawn(menu);
+		}
 	}
 
 	// Empirical adjust if we have a small enough number of languages to select
@@ -1585,10 +1621,1072 @@ void SetBootTypeDropdownWidth(void)
 void OnPaint(HDC hdc)
 {
 	int i;
-	HPEN hp = CreatePen(0, (fScale < 1.5f) ? 2 : 3, RGB(0, 0, 0));
+	HPEN hp = CreatePen(0, (fScale < 1.5f) ? 2 : 3, IsAppsUseDarkMode()?RGB(255,255,255): RGB(0, 0, 0));
 	SelectObject(hdc, hp);
 	for (i = 0; i < ARRAYSIZE(section_vpos); i++) {
 		MoveToEx(hdc, mw + 10, section_vpos[i], NULL);
 		LineTo(hdc, mw + fw, section_vpos[i]);
+	}
+}
+ BOOL  IsAppsUseDarkMode(void) {
+	char buffer[4];
+	DWORD cbData = (DWORD)(sizeof(buffer));
+	LSTATUS res = RegGetValue(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme", RRF_RT_REG_DWORD, NULL, buffer, &cbData);
+	if (res == ERROR_SUCCESS)
+	{
+		int i = (int)(buffer[3] << 24 | buffer[2] << 16 | buffer[1] << 8 | buffer[0]);
+		return i == 0;
+	}
+	return FALSE;
+}
+
+ void FillSoldRect(HDC hdc, RECT lpRECT,COLORREF back)
+ {
+	 RGBQUAD bitmapBits = { GetBValue(back),GetGValue(back),GetRValue(back),0xff };
+	 BITMAPINFO bi = { 0 };
+	 bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	 bi.bmiHeader.biWidth = 1;
+	 bi.bmiHeader.biHeight = 1;
+	 bi.bmiHeader.biPlanes = 1;
+	 bi.bmiHeader.biBitCount = 32;
+	 bi.bmiHeader.biCompression = BI_RGB;
+	// bi.bmiColors[0] = bitmapBits1;
+	// bi.bmiColors[1] = bitmapBits;
+	 //HBRUSH backBrush = CreateSolidBrush(RGB(0, 0, 0));
+	 //FillRect(hdc, &lpRECT, GetStockObject(NULL_BRUSH));
+	// RGBQUAD bitmapBits={ 0,GetGValue(back),GetBValue(back) ,0xff };
+	 //StretchDIBits(hdc, lpRECT.left, lpRECT.top, lpRECT.right - lpRECT.left, lpRECT.bottom - lpRECT.top, 0, 0, 1, 1, NULL, &bi, DIB_RGB_COLORS, BLACKNESS);
+	 ////RGBQUAD bitmapBits = { GetRValue(back),GetGValue(back),GetBValue(back) ,0xff };
+	 //StretchDIBits(hdc, lpRECT.left, lpRECT.top, lpRECT.right - lpRECT.left, lpRECT.bottom - lpRECT.top, 0, 0, 1, 1, &bitmapBits1, &bi, DIB_RGB_COLORS, SRCCOPY);
+	 //RGBQUAD rgbColors[256];
+	 //GetDIBColorTable(hdc, 0, 256, &rgbColors);
+	 //COLORREF newColor= RGB(50, 32, 32);
+	 //COLORREF oldColor = RGB(104, 104, 104);
+	 //for (int i = 0; i < 256; i++)
+	 //{
+		// rgbColors[i].rgbReserved = 255;
+		// rgbColors[i].rgbRed = GetRValue(newColor);
+		// rgbColors[i].rgbGreen = GetGValue(newColor);
+		// rgbColors[i].rgbBlue = GetBValue(newColor);
+		// /*for (int j = 0; j < 50; j++) {
+		//	 if (((rgbColors[j].rgbRed == GetRValue(oldColor)) && rgbColors[j].rgbGreen == GetGValue(oldColor)) && (rgbColors[j].rgbBlue == GetBValue(oldColor)))
+		//	 {
+		//		 rgbColors[j].rgbRed = GetRValue(newColor);
+		//		 rgbColors[j].rgbGreen = GetGValue(newColor);
+		//		 rgbColors[j].rgbBlue = GetBValue(newColor);
+		//	 }
+		// }*/
+	 //}
+	 //SetDIBColorTable(hdc, 0, 256, rgbColors);
+	 //SetStretchBltMode(hdc, COLORONCOLOR);
+	 StretchDIBits(hdc, lpRECT.left, lpRECT.top, lpRECT.right - lpRECT.left, lpRECT.bottom - lpRECT.top, 0, 0, 1, 1, &bitmapBits, &bi, DIB_RGB_COLORS, SRCCOPY);
+ }
+ void MakeBitmapOpaque(HDC hdc, RECT lpRECT)
+ {
+	 BITMAPINFO bi = { 0 };
+	 bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	 bi.bmiHeader.biWidth = 1;
+	 bi.bmiHeader.biHeight = 1;
+	 bi.bmiHeader.biPlanes = 1;
+	 bi.bmiHeader.biBitCount = 32;
+	 bi.bmiHeader.biCompression = BI_RGB;
+	 RGBQUAD bitmapBits = { 0x00, 0x00, 0x00, 0xFF };
+	 StretchDIBits(hdc, lpRECT.left, lpRECT.top, lpRECT.right- lpRECT.left, lpRECT.bottom- lpRECT.top, 0, 0, 1, 1, &bitmapBits, &bi, DIB_RGB_COLORS, SRCPAINT);
+ }
+void OnGroupBoxPaint(HWND hWnd, HDC hdc, int state)
+{
+	RECT rcClient;
+	BOOL isEnabled = IsWindowEnabled(hWnd);
+	COLORREF textColor = isEnabled ? RGB(255, 255, 255) : GetSysColor(COLOR_GRAYTEXT);
+	HBRUSH	bruch = CreateSolidBrush(ColorControlDark);
+	GetClientRect(hWnd, &rcClient);
+	int padding = GetSystemMetrics(SM_CXPADDEDBORDER) + GetSystemMetrics(SM_CYDLGFRAME);
+	rcClient.top += padding;
+	HTHEME hTheme = GetWindowTheme(hWnd); /*OpenThemeData(NULL, L"DarkMode_Explorer::BUTTON");*/;
+	if (hTheme)
+	{
+		int gbsState = isEnabled ? GBS_NORMAL : GBS_DISABLED;
+		RECT rc;
+		COLORREF textColor = isEnabled ? RGB(255, 255, 255) : GetSysColor(COLOR_GRAYTEXT);
+		GetClientRect(hWnd, &rc);
+		WCHAR szCaption[50] = { 0 };
+		GetWindowText(hWnd, szCaption, ARRAYSIZE(szCaption));
+		HFONT font = (HFONT)SendMessage(hWnd, WM_GETFONT, 0, 0);
+		SelectObject(hdc, font);
+		RECT textRect;
+		GetThemeTextExtent(hTheme, hdc, BP_GROUPBOX, gbsState, szCaption, -1, DT_LEFT | DT_SINGLELINE, &rc, &textRect);
+
+		OffsetRect(&textRect, padding, 0);
+		HRGN textRGN = CreateRectRgnIndirect(&textRect);
+		ExtSelectClipRgn(hdc, textRGN, RGN_DIFF);
+	    DrawThemeBackground(hTheme, hdc, BP_GROUPBOX, gbsState, &rcClient, NULL);
+			
+			if (szCaption != NULL)
+			{
+			    ExtSelectClipRgn(hdc, textRGN, RGN_COPY);
+				DTTOPTS opts;
+				opts.dwSize = sizeof(DTTOPTS);
+				opts.dwFlags = DTT_TEXTCOLOR;
+				opts.crText = textColor;
+				DrawThemeTextEx(hTheme, hdc, BP_GROUPBOX, gbsState, szCaption, -1, DT_SINGLELINE | DT_LEFT, &textRect, &opts);
+			}
+	}
+}
+void OnCheckBoxPaint(HWND hWnd, HDC hdc, int state)
+{
+	RECT rc;
+	COLORREF textColor = IsWindowEnabled(hWnd) ? RGB(255, 255, 255) : GetSysColor(COLOR_GRAYTEXT);
+	HBRUSH	bruch = CreateSolidBrush(ColorControlDark);
+	GetClientRect(hWnd, &rc);
+	HTHEME hTheme = hTheme = GetWindowTheme(hWnd); //OpenThemeData(NULL, L"DarkMode_Explorer::BUTTON");
+	if (hTheme)
+	{
+		SIZE siz;
+		GetThemePartSize(hTheme, hdc, BP_CHECKBOX, CBS_UNCHECKEDNORMAL, NULL, TS_DRAW, &siz);
+		RECT rcback = rc;
+		rcback.right = siz.cy;
+		BOOL isEnabled = (IsWindowEnabled(hWnd));
+		int chState;
+		switch (state)
+		{
+		case 1:
+			chState = IsChecked(GetDlgCtrlID(hWnd)) ? CBS_CHECKEDNORMAL : CBS_UNCHECKEDNORMAL;
+			DrawThemeBackground(hTheme, hdc, BP_CHECKBOX, chState, &rcback, NULL);
+
+			break;
+		case 2:
+			chState = IsChecked(GetDlgCtrlID(hWnd)) ? CBS_CHECKEDHOT : CBS_UNCHECKEDHOT;
+			if (isEnabled)
+				DrawThemeBackground(hTheme, hdc, BP_CHECKBOX, chState, &rcback, NULL);
+			break;
+		case 3:
+			chState = IsChecked(GetDlgCtrlID(hWnd)) ? CBS_CHECKEDPRESSED : CBS_UNCHECKEDPRESSED;
+			if (isEnabled)
+				DrawThemeBackground(hTheme, hdc, BP_CHECKBOX, chState, &rcback, NULL);
+			break;
+			break;
+		default:
+			chState = IsChecked(GetDlgCtrlID(hWnd)) ? CBS_CHECKEDNORMAL : CBS_UNCHECKEDNORMAL;
+			DrawThemeBackground(hTheme, hdc, BP_CHECKBOX, chState, &rcback, NULL);
+			break;
+		}
+		int padding = GetSystemMetrics(SM_CXFOCUSBORDER);
+		rc.left += siz.cx + padding;
+		FillRect(hdc, &rc, bruch);
+		
+		rc.top += padding;
+		WCHAR szCaption[60];
+		GetWindowText(hWnd, szCaption, 60);
+		DTTOPTS opts;
+		opts.dwSize = sizeof(DTTOPTS);
+		opts.dwFlags =   DTT_TEXTCOLOR;
+		opts.crText = textColor;
+		
+		/*
+		* SET only if you def window proce;
+		LOGFONT lgFont = {0};
+		GetThemeFont(hTheme, hdc, BP_CHECKBOX, chState, TMT_FONT, &lgFont);
+		HFONT font = CreateFontIndirect(&lgFont);
+		if (isEnabled);*/
+		HFONT font1 = (HFONT)SendMessage(hWnd, WM_GETFONT, 0, 0);
+		//SelectObject(hdc, isEnabled ? font1 : font);
+		SelectObject(hdc,font1);
+		DrawThemeTextEx(hTheme, hdc, BP_CHECKBOX, 1, szCaption, -1, DT_SINGLELINE | DT_LEFT, &rc, &opts);
+		
+		//DeleteObject(font);
+	}
+}
+
+ LRESULT OnDrawItem(HWND hWnd,UINT Msg,WPARAM wParam,LPARAM lParam)
+{
+	
+	 DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lParam;
+
+	switch (dis->CtlType)
+	{
+	case ODT_BUTTON:
+		//DrawButton(dis);
+		break;
+	case ODT_MENU:
+		DrawMenu(dis);
+		break;
+	}
+	return 1;
+}
+
+  LRESULT OnMeasureItem(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+ {
+	  NONCLIENTMETRICS info = { 0 };
+	  info.cbSize = sizeof(info);
+
+	  SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(info), &info, 0);
+	 MEASUREITEMSTRUCT* lpMIS = (MEASUREITEMSTRUCT*)(lParam);
+	 if (lpMIS->CtlType == ODT_MENU)
+	 {
+		
+		 RECT rcClient;
+		 GetClientRect(hWnd, &rcClient);
+		 HTHEME hTheme = OpenThemeData(HWND_TOP, IsAppsUseDarkMode() ? L"DarkMode::Menu" : L"Menu");
+		 lpMIS->itemWidth = info.iMenuWidth;
+		 lpMIS->itemHeight = info.iMenuHeight + info.iBorderWidth*2;
+		 HDC hdc = GetDC(hWnd);
+		 HFONT sysMenuFont = CreateFontIndirect(&info.lfMenuFont);
+		 HFONT oldFont = SelectFont(hdc, sysMenuFont);
+		 WCHAR lpString[MAX_PATH] = { 0 };
+		 //pmyitem = (MYITEM*)lpMIS->itemData;
+		 int nCharCount = 0;
+		/* if (pmyitem != NULL && pmyitem->hMenu)
+		 {
+			 nCharCount = GetMenuString(pmyitem->hMenu, lpMIS->itemID != 0 ? lpMIS->itemID : pmyitem->itemId, NULL, 0, MF_BYCOMMAND);
+			 GetMenuString(pmyitem->hMenu, lpMIS->itemID != 0 ? lpMIS->itemID : pmyitem->itemId , lpString, nCharCount+1, MF_BYCOMMAND);
+		 }*/
+		 SIZE tabSize,strSize;
+		 RECT rc = { 0 };
+		 RECT tabRect = { 0 };
+		 GetThemeTextExtent(hTheme, hdc, 14 /*POPUPITEM*/, 1, lpString, -1, DT_CALCRECT|DT_EXPANDTABS| DT_EDITCONTROL, &rcClient, &rc);
+		 GetThemeTextExtent(hTheme, hdc, 14 /*POPUPITEM*/, 1, L"\t", -1, DT_CALCRECT | DT_EXPANDTABS , &rcClient, &tabRect);
+		 lpMIS->itemWidth += rc.right + tabRect.right;
+		 ReleaseDC(hWnd, hdc);
+		 
+	 }
+	 return TRUE;
+ }
+ 
+ void DrawMenu(DRAWITEMSTRUCT* dis)
+{
+	 NONCLIENTMETRICS info = { 0 };
+	 info.cbSize = sizeof(info);
+
+	 SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(info), &info, 0);
+	HBRUSH menuSlBrush = CreateSolidBrush(RGB(65, 65, 65));
+	HBRUSH menuBkBrush = CreateSolidBrush(RGB(43, 43, 43));
+	HBRUSH menugryBruch = CreateSolidBrush(RGB(109, 109, 109));
+	HDC bufferDc  = dis->hDC;
+	
+	WCHAR lpString[MAX_PATH] = { 0 };
+	int nCharCount = GetMenuString((HMENU)dis->hwndItem, dis->itemID, NULL, 0, MF_BYCOMMAND);
+	GetMenuString((HMENU)dis->hwndItem, dis->itemID, lpString, nCharCount + 1, MF_BYCOMMAND);
+	BOOL isSeparatorItem = dis->itemID == 0 && dis->itemData != NULL;
+	BOOL isDisabled = ((dis->itemState & ODS_GRAYED) == ODS_GRAYED || (dis->itemState & ODS_DISABLED) == ODS_DISABLED);
+	RECT iconRect = { dis->rcItem.left - 1, dis->rcItem.top - 1 , GetSystemMetrics(SM_CYMENU), dis->rcItem.bottom - 1 };
+	//pmyitem = (MYITEM*)dis->itemData;
+	HTHEME hTheme = OpenThemeData(HWND_TOP,L"DarkMode::Menu");
+	switch (dis->itemAction)
+	{
+	case ODA_DRAWENTIRE:
+	{
+		FillRect(bufferDc, &dis->rcItem, menuBkBrush);
+		//TODO: The localized system menu does not work, let's see what to do
+
+		if (_wcsicmp(lpString, L"&Restore") == 0)
+		{
+			DrawThemeBackground(hTheme, bufferDc, MENU_SYSTEMRESTORE, isDisabled ? MSYSR_DISABLED: MSYSR_NORMAL, &iconRect, NULL);
+			
+		}
+		else if (_wcsicmp(lpString, L"Mi&nimize") == 0)
+		{
+			DrawThemeBackground(hTheme, bufferDc, MENU_SYSTEMMINIMIZE, isDisabled ? MSYSMN_DISABLED : MSYSMN_NORMAL, &iconRect, NULL);
+		}
+		else if (_wcsicmp(lpString, L"Ma&ximize") == 0)
+		{
+			DrawThemeBackground(hTheme, bufferDc, MENU_SYSTEMMAXIMIZE, isDisabled ? MSYSMX_DISABLED : MSYSMX_NORMAL, &iconRect, NULL);
+		}
+
+		else if (_wcsicmp(lpString, L"&Close\tAlt+F4") == 0)
+		{
+			DrawThemeBackground(hTheme, bufferDc, MENU_SYSTEMCLOSE, isDisabled ? MSYSC_DISABLED : MSYSC_NORMAL, &iconRect, NULL);
+		}
+		
+		else if (isSeparatorItem)
+		{
+			int padding = info.iMenuWidth + info.iBorderWidth * 2 + info.iPaddedBorderWidth * 2;
+			HPEN pen = CreatePen(PS_SOLID, 1, RGB(128, 128, 128));
+			HPEN oldPen = SelectObject(bufferDc,pen );
+			MoveToEx(bufferDc,dis->rcItem.left+padding, dis->rcItem.bottom - info.iPaddedBorderWidth - info.iBorderWidth, NULL);
+			LineTo(bufferDc, dis->rcItem.right, dis->rcItem.bottom - info.iPaddedBorderWidth - info.iBorderWidth);
+			SelectObject(bufferDc, oldPen);
+			DeleteObject(pen);
+			//DrawThemeBackground(hTheme, bufferDc, 6,0, &iconRect, NULL);
+		}
+	}
+
+		break;
+	case ODA_FOCUS:
+
+		DrawFocusRect(bufferDc, & dis->rcItem);
+		break;
+	case ODA_SELECT:
+		if (((dis->itemState & ODS_SELECTED) == ODS_SELECTED) && !isDisabled && !isSeparatorItem)
+			FillRect(bufferDc, &dis->rcItem, menuSlBrush);
+		else
+		 if(!isSeparatorItem)	FillRect(bufferDc, &dis->rcItem, menuBkBrush);
+		if (_wcsicmp(lpString, L"&Restore") == 0)
+		{
+			DrawThemeBackground(hTheme, bufferDc, 20, isDisabled ? 2 : 1, &iconRect, NULL);
+
+		}
+		else if (_wcsicmp(lpString, L"Mi&nimize") == 0)
+		{
+			DrawThemeBackground(hTheme, bufferDc, 19, isDisabled ? 2 : 1, &iconRect, NULL);
+		}
+		else if (_wcsicmp(lpString, L"Ma&ximize") == 0)
+		{
+			DrawThemeBackground(hTheme, bufferDc, 18, isDisabled ? 2 : 1, &iconRect, NULL);
+		}
+
+		else if (_wcsicmp(lpString, L"&Close\tAlt+F4") == 0)
+		{
+			DrawThemeBackground(hTheme, bufferDc, 17, isDisabled ? 2 : 1, &iconRect, NULL);
+		}
+		break;
+	}
+	
+	
+	/*BOOL isClosebtn = (_wcsicmp(lpString, L"&Close\tAlt+F4") == 0);
+	if (hTheme != NULL && isClosebtn)
+	{
+
+		RECT iconRect = { dis->rcItem.left, dis->rcItem.top-2 , GetSystemMetrics(SM_CYMENUCHECK), dis->rcItem.bottom};
+		DrawThemeBackground(hTheme, bufferDc, 17, 1, &iconRect, NULL);
+	}*/
+	
+	OffsetRect(&dis->rcItem, info.iMenuWidth+info.iBorderWidth*2+info.iPaddedBorderWidth*2, 0);
+	HFONT font = CreateFontIndirect(&info.lfMenuFont);
+	HFONT oldfont1 = SelectObject(bufferDc, font);
+	if (hTheme != NULL)
+	{
+
+
+		DrawThemeText(hTheme, bufferDc, 14 /*POPUPITEM*/, isDisabled? 3 : 1, lpString, -1, DT_EXPANDTABS|DT_HIDEPREFIX , 0,&dis->rcItem);
+		CloseThemeData(hTheme);
+	}
+	
+	SelectObject(bufferDc, oldfont1);
+	DeleteObject(font);
+	DeleteObject(menuBkBrush);
+	DeleteObject(menuSlBrush);
+}
+
+ void SetMenuOwnerDrawn(HMENU hmenu)
+{
+	/* MENUINFO MenuInfo = {sizeof(MenuInfo)};
+	 MenuInfo.fMask = MIM_BACKGROUND | MIM_STYLE | MIM_MENUDATA | MIM_HELPID | MIM_MAXHEIGHT;
+	 GetMenuInfo(hmenu, &MenuInfo);
+	 MenuInfo.hbrBack = CreateSolidBrush(RGB(50, 50, 50));
+	 MenuInfo.fMask = MIM_BACKGROUND | MIM_STYLE;
+	 MenuInfo.dwStyle = MIM_APPLYTOSUBMENUS;
+	 SetMenuInfo(hmenu, &MenuInfo);*/
+	int count = GetMenuItemCount(hmenu);
+	for (int i = 0; i < count; i++)
+	{
+
+		MENUITEMINFO mii = { sizeof(mii)};
+		MENUITEMINFO mii1 = { sizeof(mii) };
+		mii.fMask = MIIM_STATE | MIIM_ID |MIIM_DATA | MIIM_FTYPE| MFT_STRING;
+		GetMenuItemInfo(hmenu, i, TRUE, &mii);
+		int nItemID = GetMenuItemID(hmenu, i);
+		
+		ModifyMenuW(hmenu, i, MF_BYPOSITION | MF_STRING| MF_OWNERDRAW, mii.wID,NULL);
+	}
+}
+
+ void RemoveMenuOwnerDrawn(HMENU hmenu)
+ {
+	 MENUINFO MenuInfo = { sizeof(MenuInfo) };
+	 MenuInfo.fMask = MIM_BACKGROUND;
+	 GetMenuInfo(hmenu, &MenuInfo);
+	 MenuInfo.hbrBack = GetSysColorBrush(COLOR_MENU); // CreateSolidBrush(RGB(50, 50, 50));
+	 MenuInfo.fMask = MIM_BACKGROUND | MIM_STYLE;
+	 MenuInfo.dwStyle = MIM_APPLYTOSUBMENUS;
+	 SetMenuInfo(hmenu, &MenuInfo);
+	 int count = GetMenuItemCount(hmenu);
+	 for (int i = 0; i < count; i++)
+	 {
+		 MENUITEMINFO mii = { sizeof(mii) };
+		 mii.fMask = MIIM_FTYPE;
+		 GetMenuItemInfo(hmenu, i, TRUE, &mii);
+		 if ((mii.fType & MFT_OWNERDRAW) == MFT_OWNERDRAW)
+		 mii.fType &= ~MFT_OWNERDRAW;
+		 SetMenuItemInfo(hmenu, i, TRUE, &mii);
+     }
+	 
+ }
+ void InitDarkMode(HWND hDlg)
+ {
+	 if (IsAppsUseDarkMode())
+	 {
+		 SetWindowSubclass(hDlg, DlgSubclassProc, 0, 0);
+		 HMENU systemMenu = GetSystemMenu(hDlg, FALSE);
+		 SetMenuOwnerDrawn(systemMenu);
+	 }
+ }
+void OnButtonPaint(HWND hWnd, HDC hdc, int state)
+{
+	LONG_PTR style = GetWindowLongPtr(hWnd, GWL_STYLE);
+	
+	if((style & BS_GROUPBOX) == BS_GROUPBOX)
+	{
+		OnGroupBoxPaint(hWnd, hdc, state);
+	}
+	else if((style & BS_CHECKBOX) == BS_CHECKBOX)
+	{
+		OnCheckBoxPaint(hWnd, hdc, state);
+	}
+
+}
+
+LRESULT CALLBACK ButtonSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR idSubclass, DWORD_PTR dwRefData)
+{
+	PAINTSTRUCT ps;
+	HDC hDc;
+	if (!IsAppsUseDarkMode())
+	{
+		return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+	}
+	
+
+	switch (uMsg)
+	{
+	case WM_LBUTTONDOWN:
+		ButtonState = 3;
+		//InvalidateRect(hWnd, NULL, FALSE);
+		return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+	case WM_LBUTTONUP:
+		ButtonState = 1;
+		//InvalidateRect(hWnd, NULL, TRUE);
+		return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+	case WM_MOUSEMOVE:
+			tme.hwndTrack = hWnd;
+			tme.cbSize = sizeof(TRACKMOUSEEVENT); // make sure it gets correct size in different platforms
+			tme.dwFlags = TME_HOVER | TME_LEAVE;
+			tme.dwHoverTime = 1;
+			TrackMouseEvent(&tme);
+		return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+		break;
+	case WM_MOUSEHOVER:
+		ButtonState = 2;
+		InvalidateRect(hWnd, NULL, TRUE);
+		return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+	case WM_MOUSELEAVE:
+		tme.hwndTrack = hWnd;
+		tme.cbSize = sizeof(TRACKMOUSEEVENT); // make sure it gets correct size in different platforms
+		tme.dwFlags = TME_HOVER | TME_LEAVE | TME_CANCEL;
+		tme.dwHoverTime = 1;
+		TrackMouseEvent(&tme);
+		ButtonState = 1;
+		InvalidateRect(hWnd, NULL, TRUE);
+		return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+	case WM_PAINT:
+	{
+			//LRESULT result=	DefSubclassProc(hWnd, uMsg, wParam, lParam);
+			/*hDc = GetDC(hWnd);*/ hDc=BeginPaint(hWnd, &ps);
+			OnButtonPaint(hWnd, hDc, ButtonState);
+			//ReleaseDC(hWnd, hDc);
+		    EndPaint(hWnd, &ps);
+		   //return result;
+	}
+	
+	}
+	return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+}
+/*
+ * Set DarkMode to all Child Windows
+ */
+
+BOOL CALLBACK ThemeCallback(HWND hWnd, LPARAM lParam)
+{
+	BOOL isDarkMode = IsAppsUseDarkMode();
+	WCHAR str[20] = { 0 };
+	GetClassName(hWnd, str, 20);
+	if (_wcsicmp(str, L"Button") == 0)
+	{
+		SetWindowTheme(hWnd, isDarkMode ? L"DarkMode_Explorer" : L"Explorer", NULL);
+		LONG_PTR style = GetWindowLongPtr(hWnd, GWL_STYLE);
+		if (((style & BS_CHECKBOX) == BS_CHECKBOX)|| ((style & BS_GROUPBOX) == BS_GROUPBOX))
+		{
+			if (!isDarkMode)
+			{
+				RemoveWindowSubclass(hWnd, ButtonSubclassProc, 0);
+				//return TRUE;
+			}
+			else
+				SetWindowSubclass(hWnd, ButtonSubclassProc, 0, 0);
+		}
+	}
+
+	else if (_wcsicmp(str, L"ComboBox") == 0|| _wcsicmp(str, L"ComboBox32") == 0)
+	{
+
+		SetWindowTheme(hWnd, isDarkMode ? L"DarkMode_CFD" : L"Explorer", NULL);
+
+
+	}
+	else if (_wcsicmp(str, L"ToolbarWindow32") == 0)
+	{
+		WCHAR toolbarText[50];
+		WCHAR multiToolbarText[50];
+		utf8_to_wchar_no_alloc(lmprintf(MSG_315), multiToolbarText, ARRAYSIZE(multiToolbarText));
+		int len = GetWindowTextLength(hWnd);
+		GetWindowText(hWnd, (WCHAR*)toolbarText, len);
+		if (strcmp((char*)toolbarText, (char*)multiToolbarText) != 0)
+		   SetWindowTheme(hWnd, isDarkMode ? L"DarkMode" : L"Explorer", NULL);
+		else
+		{
+			HWND tooltip = (HWND)SendMessage(hWnd, TB_GETTOOLTIPS, 0, 0);
+			SendMessageW(tooltip, TTM_SETWINDOWTHEME, 0, (LPARAM)&L"DarkMode_Explorer");
+		}
+
+	/*	char multiToolbarText[50]= "Multiple buttons";
+		char toolbarText[50];
+		GetWindowTextU(hWnd, toolbarText, sizeof(toolbarText));
+			if (strcmp(toolbarText, (char*)multiToolbarText) != 0)
+				SetWindowTheme(hWnd, isDarkMode ? L"DarkMode" : L"Explorer", NULL);
+			else
+			{
+				HWND tooltip = (HWND)SendMessage(hWnd, TB_GETTOOLTIPS, 0, 0);
+				SendMessageW(tooltip, TTM_SETWINDOWTHEME, 0, (LPARAM)&L"DarkMode_Explorer");
+			}
+		*/
+	}
+	else if (_wcsicmp(str, L"EDIT") == 0)
+	{
+		LONG_PTR style = GetWindowLongPtr(hWnd, GWL_STYLE);
+		if (((style & WS_VSCROLL) == WS_VSCROLL) || ((style & WS_HSCROLL) == WS_HSCROLL))
+			SetWindowTheme(hWnd, isDarkMode ? L"DarkMode_Explorer" : L"Explorer", NULL);
+		else
+			SetWindowTheme(hWnd, isDarkMode ? L"DarkMode_CFD" : L"Explorer", NULL);
+	}
+	else if (_wcsicmp(str, L"RichEdit20W") == 0)
+	{
+		SendMessage(hWnd, EM_SETBKGNDCOLOR, 0, isDarkMode ? (LPARAM)ColorControlDark : (LPARAM)GetSysColor(COLOR_BTNFACE));
+		CHARFORMAT cf;
+		cf.cbSize = sizeof(cf);
+		cf.dwMask = CFM_COLOR;
+		cf.crTextColor = isDarkMode ? RGB(255, 255, 255) : RGB(0, 0, 0);
+		cf.dwEffects = 0;
+		SendMessage(hWnd, EM_SETCHARFORMAT, SCF_DEFAULT, (LPARAM)&cf);
+		SetWindowTheme(hWnd, NULL, isDarkMode ? L"DarkMode_Explorer::ScrollBar" : L"Explorer::ScrollBar");
+	}
+
+	return TRUE;
+}
+void drawMinimizeIcon(HWND hWnd, RECT drawRect,COLORREF backColor)
+{
+	HDC	hDc = GetWindowDC(hWnd);
+	//IntersectClipRect(hDc, drawRect.left, drawRect.top, drawRect.right, drawRect.bottom);
+	HBRUSH oldBrush = SelectObject(hDc, GetStockObject(NULL_BRUSH));
+	HPEN oldPen = SelectObject(hDc, GetStockObject(WHITE_PEN));
+	int width = drawRect.right - drawRect.left;
+	int height = drawRect.bottom - drawRect.top;
+	//HBRUSH backBrush = CreateSolidBrush(backColor);
+	//FillRect(hDc, &drawRect, backBrush);
+	FillSoldRect(hDc, drawRect, backColor);
+	MoveToEx(hDc, drawRect.left + (int)(width / 2) - 5, drawRect.top + (int)(height / 2), NULL);
+	LineTo(hDc, drawRect.left + (int)(width / 2) + 5, drawRect.top + (int)(height / 2));
+	SelectObject(hDc, oldPen);
+	SelectObject(hDc, oldBrush);
+	//MakeBitmapOpaque(hDc, drawRect);
+	ReleaseDC(hWnd, hDc);
+}
+void drawMaximizeIcon(HWND hWnd, RECT drawRect,COLORREF backColor)
+{
+	HDC	hDc = GetWindowDC(hWnd);
+	//IntersectClipRect(hDc, drawRect.left, drawRect.top, drawRect.right, drawRect.bottom);
+	HBRUSH oldBrush = SelectObject(hDc, GetStockObject(NULL_BRUSH));
+	HPEN oldPen = SelectObject(hDc, GetStockObject(WHITE_PEN));
+	int width = drawRect.right - drawRect.left;
+	int height = drawRect.bottom - drawRect.top;
+	//HBRUSH backBrush = CreateSolidBrush(backColor);
+	//FillRect(hDc, &drawRect, backBrush);
+	FillSoldRect(hDc, drawRect, backColor);
+	Rectangle( hDc,drawRect.left+width/2-5, drawRect.top+height/2-5, drawRect.right - width / 2+5, drawRect.bottom - height / 2 + 5);
+	SelectObject(hDc, oldPen);
+	SelectObject(hDc, oldBrush);
+	//MakeBitmapOpaque(hDc, drawRect);
+	ReleaseDC(hWnd, hDc);
+}
+void drawCloseIcon(HWND hWnd, RECT drawRect,COLORREF backColor)
+{
+
+    HDC	windowDC = GetWindowDC(hWnd);
+	//IntersectClipRect(windowDC, drawRect.left, drawRect.top, drawRect.right, drawRect.bottom);
+	int width = drawRect.right - drawRect.left;
+	int height = drawRect.bottom - drawRect.top;
+	//HBRUSH backBrush = CreateSolidBrush(backColor);
+	//HDC memDC=windowDC;
+	//FillRect(memDC, &drawRect, backBrush);
+	FillSoldRect(windowDC, drawRect, backColor);
+	HPEN oldPen = SelectObject(windowDC, GetStockObject(WHITE_PEN));
+	MoveToEx(windowDC,drawRect.left + (int)(width / 2) - 5, drawRect.top + (int)(height / 2) - 4, NULL);
+	LineTo(windowDC, drawRect.left + (int)(width / 2) + 4, drawRect.top + (int)(height / 2) + 5);
+	MoveToEx(windowDC, drawRect.left + (int)(width / 2) - 5, drawRect.top + (int)(height / 2) + 4, NULL);
+	LineTo(windowDC, drawRect.left + (int)(width / 2) + 4, drawRect.top + (int)(height / 2) - 5);
+	SelectObject(windowDC, oldPen);
+	//DeleteObject(backBrush);
+	//MakeBitmapOpaque(windowDC, drawRect);
+	ReleaseDC(hWnd, windowDC);
+}
+
+LRESULT CALLBACK OnNcPaint(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	LRESULT result = DefSubclassProc(hDlg, message, wParam, lParam);
+	if (message == WM_NCPAINT || message == WM_NCACTIVATE);
+	HDC windowDC = GetWindowDC(hDlg);
+	RECT rcWin, rcClient, CaptionButtonBounds;
+	GetWindowRect(hDlg, &rcWin);
+	GetClientRect(hDlg, &rcClient);
+	MapWindowPoints(NULL, hDlg, (LPPOINT)&rcWin, 2);
+	int rcWinWidth = rcWin.right - rcWin.left;
+	int rcWinHieght = rcWin.bottom - rcWin.top;
+	/*OffsetRect(&rcClient, -rcWin.left, -rcWin.top);*/
+	DwmGetWindowAttribute(hDlg, DWMWA_CAPTION_BUTTON_BOUNDS, &CaptionButtonBounds, sizeof(RECT));
+    HRGN clientRgn = CreateRectRgnIndirect(&rcClient);
+	OffsetRgn(clientRgn, -rcWin.left, -rcWin.top);
+	ExtSelectClipRgn(windowDC, clientRgn, RGN_DIFF);
+	//SelectClipRgn(windowDC, ncRgn);
+	//ExtSelectClipRgn(windowDC, CreateRectRgnIndirect(&CaptionButtonBounds), RGN_DIFF);
+	
+	/*ExcludeClipRect(windowDC, rcClient.left, rcClient.top, rcClient.right, rcClient.bottom);*/
+	//FillRect(windowDC, &rcWin, CreateSolidBrush(IsNcActive ? ActiveCaptionColor: InActiveCaptionColor));
+	OffsetRect(&rcWin, -rcWin.left, -rcWin.top);
+
+	  FillSoldRect(windowDC, rcWin, (IsNcActive ? ActiveCaptionColor: InActiveCaptionColor));
+		//MakeBitmapOpaque(windowDC, rcWin);rufus.com
+
+	LONG_PTR style = GetWindowLongPtr(hDlg, GWL_STYLE);
+
+
+	if ((style & WS_MAXIMIZEBOX) == WS_MAXIMIZEBOX || (style & WS_MINIMIZEBOX) == WS_MINIMIZEBOX)
+	{
+		int CapthoinButtonWidth = (CaptionButtonBounds.right - CaptionButtonBounds.left) / 3 ;
+		RECT CaptionButtonRECT = {rcWin.right-9,rcWin.top,rcWin.right - CapthoinButtonWidth - 7,CaptionButtonBounds.bottom };
+		//CaptionButtonRECT.right = CapthoinButtonWidth;
+		drawCloseIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+		 if (style & WS_MAXIMIZEBOX)
+		 {
+
+			 OffsetRect(&CaptionButtonRECT, -CapthoinButtonWidth, 0);
+			 drawMaximizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+		 }
+		 else
+
+		 {
+			 OffsetRect(&CaptionButtonRECT, -CapthoinButtonWidth, 0);
+			 drawMaximizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+		 }
+
+
+		 if (style & WS_MINIMIZEBOX)
+		 {
+			
+			 OffsetRect(&CaptionButtonRECT, -CapthoinButtonWidth+7, 0);
+			 drawMinimizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+		 }
+		 else
+
+		 {
+
+			 OffsetRect(&CaptionButtonRECT, -CapthoinButtonWidth+7, 0);
+			 drawMaximizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+		 }
+
+	}
+
+	else
+	{
+
+		drawCloseIcon(hDlg, CaptionButtonBounds, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+	}
+	
+	HTHEME hTheme = OpenThemeData(NULL, L"DWMWINDOW");
+	LOGFONT lgFont;
+	HFONT hFontOld = NULL;
+	if (SUCCEEDED(GetThemeSysFont(hTheme, TMT_CAPTIONFONT, &lgFont)))
+	{
+		HFONT hFont = CreateFontIndirect(&lgFont);
+		hFontOld = (HFONT)SelectObject(windowDC, hFont);
+	}
+
+	RECT closeRECT = { rcWinWidth - 53,1,rcWinWidth - 8,30 };
+
+
+
+
+	HICON icon = (HICON)SendMessage(hDlg, WM_GETICON, ICON_SMALL, 0);
+	DrawIconEx(windowDC, GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER), GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER)+1, icon, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0, NULL, (UINT)DI_NORMAL);
+	
+	DTTOPTS DttOpts = { sizeof(DttOpts) };
+	DttOpts.dwFlags = DTT_GLOWSIZE | DTT_TEXTCOLOR;
+	DttOpts.iGlowSize = 8;
+	DttOpts.crText = RGB(255, 255, 255);
+	
+
+	WCHAR szTitle[50];
+	GetWindowText(hDlg, (WCHAR*)szTitle, ARRAYSIZE(szTitle));
+	// Draw the title.
+	RECT rcPaint = rcWin;
+	rcPaint.top += GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+	rcPaint.right -= 125;
+	rcPaint.left += GetSystemMetrics(SM_CXSMICON) + GetSystemMetrics(SM_CXPADDEDBORDER) +GetSystemMetrics(SM_CXFRAME)+1;
+	rcPaint.bottom = GetSystemMetrics(SM_CYSMCAPTION) + GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+	DrawThemeTextEx(hTheme, windowDC, 0, 0, szTitle, -1, DT_LEFT | DT_WORD_ELLIPSIS, &rcPaint, &DttOpts);
+    ReleaseDC (hDlg, windowDC);
+	return result;
+}
+LRESULT CALLBACK OnNcCalcSize(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	LRESULT result	=DefWindowProc(hDlg, message, wParam, lParam);
+	RECT CaptionButtonBounds;
+	DwmGetWindowAttribute(hDlg, DWMWA_CAPTION_BUTTON_BOUNDS, &CaptionButtonBounds, sizeof(RECT));
+	//int captionHeight = GetSystemMetrics(SM_CYSMCAPTION) + GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+	int boredrWidth = -7;
+	if (wParam)
+	{
+		NCCALCSIZE_PARAMS* ncParma = (NCCALCSIZE_PARAMS*)(lParam);
+		ncParma->rgrc[0].left += boredrWidth;//pr++;
+		//ncParma->rgrc[0].top += CaptionButtonBounds.bottom+1;
+		ncParma->rgrc[0].right -= boredrWidth;
+		ncParma->rgrc[0].bottom -= boredrWidth;
+	}
+	else
+	{
+		RECT* rect = (RECT*)lParam;
+		//rect->left += boredrWidth;
+		rect->top += CaptionButtonBounds.bottom + 1;
+		rect->right -= boredrWidth;
+		rect->bottom -= boredrWidth;
+	}
+	return result;
+}
+
+LRESULT CALLBACK OnShowWindow(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	if (wParam)
+	{
+		EnumChildWindows(hDlg, ThemeCallback, lParam);
+		BOOL allowncpaint = TRUE;
+		COLORREF caption = RGB(0x0, 0x0, 0x0);
+		DwmSetWindowAttribute(hDlg, DWMWA_CAPTION_COLOR, &caption, sizeof caption);
+		DwmSetWindowAttribute(hDlg, DWMWA_BORDER_COLOR, &caption, sizeof caption);
+		DwmSetWindowAttribute(hDlg, DWMWA_ALLOW_NCPAINT, &allowncpaint, sizeof(int));
+		RECT rcDlg;
+		GetWindowRect(hDlg, &rcDlg);
+		//SetWindowPos(hDlg, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOSIZE | SWP_NOMOVE);
+
+		if (hLog)
+		{
+			RECT rcDlg;
+			RECT rcLog;
+			GetWindowRect(GetParent(hLog), &rcDlg);
+			GetClientRect(hLog, &rcLog);
+
+			rcLog.left = rcDlg.left + 3;
+			rcLog.right = rcDlg.right - 3;
+			SetWindowPos(hLog, NULL, 0, 0, rcLog.right - rcLog.left, rcLog.bottom - rcLog.top, SWP_NOMOVE | SWP_NOZORDER);
+		}
+		RedrawWindow(hDlg, NULL, NULL, RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_INVALIDATE | RDW_FRAME | RDW_ERASENOW);
+	}
+
+	return DefSubclassProc(hDlg, message, wParam, lParam);
+}
+
+/*rufus.com
+* 
+ * DarkMod Dialog Subclass Proc
+ */
+
+LRESULT CALLBACK OnCtlColor(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	HDC hDc = (HDC)wParam;
+	switch (message)
+	{
+	case WM_CTLCOLORLISTBOX:
+		SetBkColor(hDc, RGB(25, 25, 25));
+		SetTextColor(hDc, RGB(255, 255, 255));
+		return (INT_PTR)CreateSolidBrush(RGB(25, 25, 25));
+	case WM_CTLCOLOREDIT:
+		SetBkColor(hDc, RGB(25, 25, 25));
+		SetTextColor(hDc, RGB(255, 255, 255));
+		return (INT_PTR)CreateSolidBrush(RGB(25, 25, 25));
+	case WM_CTLCOLORBTN:
+	case WM_CTLCOLORDLG:
+		return (INT_PTR)CreateSolidBrush(ColorControlDark);
+	case WM_CTLCOLORSTATIC:
+		SetBkMode((HDC)wParam, TRANSPARENT);
+		SetTextColor((HDC)wParam, TOOLBAR_ICON_COLOR);
+		return (INT_PTR)CreateSolidBrush(ColorControlDark);
+	default:
+		return (INT_PTR)GetStockObject(NULL_BRUSH);
+	}
+}
+LRESULT CALLBACK OnSettingChange(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	if (IsAppsUseDarkMode())
+	{
+		BOOL allowncpaint = TRUE;
+		COLORREF caption = RGB(0x0, 0x0, 0x0);
+		DwmSetWindowAttribute(hDlg, DWMWA_CAPTION_COLOR, &caption, sizeof caption);
+		DwmSetWindowAttribute(hDlg, DWMWA_BORDER_COLOR, &caption, sizeof caption);
+		DwmSetWindowAttribute(hDlg, DWMWA_ALLOW_NCPAINT, &allowncpaint, sizeof(int));
+		SetWindowSubclass(hDlg, DlgSubclassProc, 0, 0);
+		if (hLog)
+		{
+			RECT rcLog, rcDlg;
+			GetWindowRect(hLog, &rcLog);
+			GetClientRect(GetParent(hLog), &rcDlg);
+			rcLog.left = rcDlg.left + 3;
+			rcLog.right = rcDlg.right - 3;
+			SetWindowPos(hLog, NULL, 0, 0, rcLog.right - rcLog.left, rcLog.bottom - rcLog.top, SWP_NOMOVE | SWP_NOZORDER);
+		}
+
+		
+
+
+	}
+	else
+	{
+		BOOL allowncpaint = FALSE;
+		COLORREF caption = DWMWA_COLOR_DEFAULT;
+		DwmSetWindowAttribute(hDlg, DWMWA_CAPTION_COLOR, &caption, sizeof caption);
+		DwmSetWindowAttribute(hDlg, DWMWA_BORDER_COLOR, &caption, sizeof caption);
+		DwmSetWindowAttribute(hDlg, DWMWA_ALLOW_NCPAINT, &allowncpaint, sizeof(int));
+		RemoveWindowSubclass(hDlg, DlgSubclassProc, 0);
+		if (hLog)
+		{
+			RECT rcLog, rcDlg;
+			GetWindowRect(hLog, &rcLog);
+			GetClientRect(GetParent(hLog), &rcDlg);
+			rcLog.left = rcDlg.left + 3;
+			rcLog.right = rcDlg.right - 3;
+			SetWindowPos(hLog, NULL, 0, 0, rcLog.right - rcLog.left, rcLog.bottom - rcLog.top, SWP_NOMOVE | SWP_NOZORDER);
+		}
+		
+		RemoveMenuOwnerDrawn(menu);
+		RemoveMenuOwnerDrawn(hMenu);
+		HMENU systemMenu = GetSystemMenu(hDlg, TRUE);
+		HWND tooltip = (HWND)SendMessage(hMultiToolbar, TB_GETTOOLTIPS, 0, 0);
+		SendMessageW(tooltip, TTM_SETWINDOWTHEME, 0,(LPARAM)&L"Explorer");
+
+	}
+
+	EnumChildWindows(hDlg, ThemeCallback, lParam);
+	RedrawWindow(hDlg, NULL, NULL, RDW_INVALIDATE | RDW_FRAME| RDW_INTERNALPAINT| RDW_ALLCHILDREN);
+	return DefWindowProc(hDlg, message, wParam, lParam);
+}
+LRESULT CALLBACK DlgSubclassProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR idSubclass, DWORD_PTR dwRefData)
+{
+
+	HDC dc;
+	switch (message)
+	{
+	case WM_INITDIALOG:
+	{
+	HMENU	systemMenu = GetSystemMenu(hDlg, FALSE);
+	SetMenuOwnerDrawn(systemMenu);
+		return DefSubclassProc(hDlg, message, wParam, lParam);
+	}
+	case WM_NCMOUSEMOVE:
+		tme.hwndTrack = hDlg;
+			tme.cbSize = sizeof(TRACKMOUSEEVENT); // make sure it gets correct size in different platforms
+			tme.dwFlags = TME_HOVER | TME_LEAVE|TME_NONCLIENT;
+			tme.dwHoverTime = 1;
+			TrackMouseEvent(&tme);
+		return DefSubclassProc(hDlg, message, wParam, lParam);
+	case HTTRANSPARENT:
+	case HTNOWHERE:
+	case HTERROR:
+	case WM_NCMOUSELEAVE:
+	{
+		RECT CaptionButtonBounds, rcWin;
+		DwmGetWindowAttribute(hDlg, DWMWA_CAPTION_BUTTON_BOUNDS, &CaptionButtonBounds, sizeof(RECT));
+		GetWindowRect(hDlg, &rcWin);
+		OffsetRect(&rcWin, -rcWin.left, -rcWin.top);
+		int boundsWidth = rcWin.right - rcWin.left;
+		int CaptionBoundsWidth = CaptionButtonBounds.right - CaptionButtonBounds.left;
+		int CapthoinButtonWidth = CaptionBoundsWidth / 3 ;
+		RECT CaptionButtonRECT = { boundsWidth - 9,rcWin.top,rcWin.right - CapthoinButtonWidth - 7,CaptionButtonBounds.bottom };
+		LONG_PTR style = GetWindowLongPtr(hDlg, GWL_STYLE);
+		if (CloseHitTest)
+		{
+			if ((style & WS_MAXIMIZEBOX) == WS_MAXIMIZEBOX || (style & WS_MINIMIZEBOX) == WS_MINIMIZEBOX)
+			{
+				drawCloseIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor : InActiveCaptionColor);
+			}
+			else
+			{
+				CaptionButtonRECT.left = boundsWidth - CaptionBoundsWidth - 9;
+				CaptionButtonRECT.right = boundsWidth - 7;
+				drawCloseIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+			}
+			
+			CloseHitTest = FALSE;
+		}
+		else if (MaxHitTest)
+		{
+			{
+
+				OffsetRect(&CaptionButtonRECT, -CapthoinButtonWidth + 1, 0);
+				drawMaximizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+				MaxHitTest = FALSE;
+			}
+		}
+
+		else if (MinHitTest)
+		{
+			CaptionButtonRECT.left = boundsWidth - CaptionBoundsWidth - 7;
+			CaptionButtonRECT.right = boundsWidth - (CapthoinButtonWidth * 2) - 7;
+			drawMinimizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+			MinHitTest = FALSE;
+		}
+		tme.hwndTrack = hDlg;
+		tme.cbSize = sizeof(TRACKMOUSEEVENT); // make sure it gets correct size in different platforms
+		tme.dwFlags = TME_HOVER | TME_LEAVE | TME_NONCLIENT | TME_CANCEL;
+		tme.dwHoverTime = 1;
+		TrackMouseEvent(&tme);
+	}
+			
+			return DefSubclassProc(hDlg, message, wParam, lParam);
+	case WM_NCMOUSEHOVER:
+	{
+		RECT CaptionButtonBounds, rcWin;
+		DwmGetWindowAttribute(hDlg, DWMWA_CAPTION_BUTTON_BOUNDS, (RECT*)&CaptionButtonBounds, sizeof(RECT));
+		GetWindowRect(hDlg, &rcWin);
+		OffsetRect(&rcWin, -rcWin.left, -rcWin.top);
+		int boundsWidth = rcWin.right - rcWin.left;
+		int CaptionBoundsWidth = CaptionButtonBounds.right - CaptionButtonBounds.left;
+		int CapthoinButtonWidth = (CaptionButtonBounds.right - CaptionButtonBounds.left) / 3 ;
+		CaptionButtonBounds.right = boundsWidth - 7;
+		CaptionButtonBounds.left = boundsWidth - CaptionBoundsWidth - 7;
+		
+		RECT CaptionButtonRECT = { boundsWidth - 9,rcWin.top,rcWin.right - CapthoinButtonWidth - 7,CaptionButtonBounds.bottom };
+		//CaptionButtonRECT.right = CapthoinButtonWidth;
+		
+		switch (wParam)
+		{
+		case HTCLOSE:
+		{
+			LONG_PTR style = GetWindowLongPtr(hDlg, GWL_STYLE);
+			if ((style & WS_MAXIMIZEBOX) == WS_MAXIMIZEBOX || (style & WS_MINIMIZEBOX) == WS_MINIMIZEBOX)
+			{
+				drawCloseIcon(hDlg, CaptionButtonRECT, RGB(255, 0, 0));
+
+			}
+			else
+			{
+				CaptionButtonRECT.left = boundsWidth - CaptionBoundsWidth - 7;
+				CaptionButtonRECT.right = boundsWidth - 7;
+				drawCloseIcon(hDlg, CaptionButtonRECT, RGB(255, 0, 0));
+			}
+			CloseHitTest = TRUE;
+			if (MaxHitTest)
+			{
+				
+				OffsetRect(&CaptionButtonRECT, -CapthoinButtonWidth + 1, 0);
+				drawMaximizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+				MaxHitTest = FALSE;
+			}
+			
+		}
+		break;
+		case HTMAXBUTTON:
+			if (CloseHitTest)
+			{
+				drawCloseIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+				CloseHitTest = FALSE;
+			}
+			if (MinHitTest)
+			{
+				CaptionButtonRECT.left = boundsWidth - CaptionBoundsWidth - 7;
+				CaptionButtonRECT.right = boundsWidth - (CapthoinButtonWidth * 2) - 7;
+				drawMinimizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+				MinHitTest = FALSE;
+			}
+			if (!MaxHitTest)
+			{
+				CaptionButtonRECT.left = boundsWidth - (CapthoinButtonWidth * 2) - 5;
+				CaptionButtonRECT.right = boundsWidth - (CapthoinButtonWidth) - 7;
+				COLORREF capthionColor = IsNcActive ? ActiveCaptionColor : InActiveCaptionColor;
+				drawMaximizeIcon(hDlg, CaptionButtonRECT, RGB(GetRValue(capthionColor)-10, GetGValue(capthionColor) - 10, GetBValue(capthionColor) - 10));
+				MaxHitTest = TRUE;
+			}
+			
+			break;
+		case HTMINBUTTON:
+			if (MaxHitTest)
+			{
+				OffsetRect(&CaptionButtonRECT, -CapthoinButtonWidth + 1, 0);
+				drawMaximizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+				MaxHitTest = FALSE;
+			}
+			if (!MinHitTest)
+			{
+				CaptionButtonRECT.left = boundsWidth- CaptionBoundsWidth-9;
+				CaptionButtonRECT.right = boundsWidth -(CapthoinButtonWidth*2)-7;
+				COLORREF capthionColor = IsNcActive ? ActiveCaptionColor : InActiveCaptionColor;
+				drawMinimizeIcon(hDlg, CaptionButtonRECT, RGB(GetRValue(capthionColor) - 10, GetGValue(capthionColor) - 10, GetBValue(capthionColor) - 10));
+				MinHitTest = TRUE;
+			}
+			break;
+		case HTCAPTION:
+		{
+			
+			LONG_PTR style = GetWindowLongPtr(hDlg, GWL_STYLE);
+			if (CloseHitTest)
+			{
+				if ((style & WS_MAXIMIZEBOX) == WS_MAXIMIZEBOX || (style & WS_MINIMIZEBOX) == WS_MINIMIZEBOX)
+				{
+					drawCloseIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+
+				}
+				else
+				{
+					CaptionButtonRECT.left = boundsWidth - CaptionBoundsWidth - 7;
+					CaptionButtonRECT.right = boundsWidth - 7;
+					drawCloseIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+				}
+
+				CloseHitTest = FALSE;
+			}
+			if (MinHitTest)
+			{
+				CaptionButtonRECT.left = boundsWidth - CaptionBoundsWidth - 9;
+				CaptionButtonRECT.right = boundsWidth - (CapthoinButtonWidth * 2) - 7;
+				drawMinimizeIcon(hDlg, CaptionButtonRECT, IsNcActive ? ActiveCaptionColor: InActiveCaptionColor);
+				MinHitTest = FALSE;
+			}
+			break;
+			
+		}
+		}
+		//tme.hwndTrack = hDlg;
+		//tme.cbSize = sizeof(TRACKMOUSEEVENT); // make sure it gets correct size in different platforms
+		//tme.dwFlags = TME_HOVER | TME_LEAVE | TME_NONCLIENT | TME_CANCEL;
+		//tme.dwHoverTime = 1;
+		//TrackMouseEvent(&tme);
+		return DefSubclassProc(hDlg, message, wParam, lParam);
+	}
+	case WM_NCACTIVATE:
+		IsNcActive = (int)wParam > 0;
+		return OnNcPaint(hDlg, message, wParam, lParam);
+		break;
+	case WM_NCPAINT:
+		return OnNcPaint(hDlg, message, wParam, lParam);
+	case WM_NCCALCSIZE:
+		return OnNcCalcSize(hDlg,message,wParam,lParam);
+	case WM_SHOWWINDOW:
+		return OnShowWindow(hDlg, message, wParam, lParam);
+	case WM_CTLCOLORLISTBOX:
+	case WM_CTLCOLOREDIT:
+	case WM_CTLCOLORBTN:
+	case WM_CTLCOLORDLG:
+	case WM_CTLCOLORSTATIC:
+		return OnCtlColor(hDlg, message, wParam, lParam);
+	case WM_DRAWITEM:
+		return  OnDrawItem(hDlg, message, wParam, lParam);
+	case WM_MEASUREITEM:
+		return OnMeasureItem(hDlg, message, wParam, lParam);
+	default:
+		return DefSubclassProc(hDlg, message, wParam, lParam);
+		break;
 	}
 }

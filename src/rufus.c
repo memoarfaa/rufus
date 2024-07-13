@@ -146,7 +146,6 @@ StrArray BlockingProcessList, ImageList;
 const int nb_steps[FS_MAX] = { 5, 5, 12, 1, 10, 1, 1, 1, 1 };
 const char* flash_type[BADLOCKS_PATTERN_TYPES] = { "SLC", "MLC", "TLC" };
 RUFUS_DRIVE rufus_drive[MAX_DRIVES] = { 0 };
-
 // TODO: Remember to update copyright year in stdlg's AboutCallback() WM_INITDIALOG,
 // localization_data.sh and the .rc when the year changes!
 
@@ -947,6 +946,7 @@ BOOL CALLBACK LogCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 	EXT_DECL(log_ext, "rufus.log", __VA_GROUP__("*.log"), __VA_GROUP__("Rufus log"));
 	switch (message) {
 	case WM_INITDIALOG:
+		InitDarkMode(hDlg);
 		apply_localization(IDD_LOG, hDlg);
 		hLog = GetDlgItem(hDlg, IDC_LOG_EDIT);
 
@@ -972,7 +972,10 @@ BOOL CALLBACK LogCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 		style = GetWindowLongPtr(hLog, GWL_STYLE);
 		style &= ~(ES_RIGHT);
 		SetWindowLongPtr(hLog, GWL_STYLE, style);
+		
 		break;
+	case WM_SETTINGCHANGE:
+		return OnSettingChange(hDlg, message, wParam, lParam);
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
 		case IDCANCEL:
@@ -2699,6 +2702,8 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		break;
 
 	case WM_INITDIALOG:
+
+		InitDarkMode(hDlg);
 		// Make sure fScale is set before the first call to apply localization, so that move/resize scale appropriately
 		hDC = GetDC(hDlg);
 		fScale = GetDeviceCaps(hDC, LOGPIXELSX) / 96.0f;
@@ -2780,7 +2785,8 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		OnPaint(hDC);
 		EndPaint(hDlg, &ps);
 		break;
-
+	case WM_SETTINGCHANGE:
+		return OnSettingChange(hDlg, message, wParam, lParam);
 	case WM_CTLCOLORSTATIC:
 		if ((HWND)lParam != GetDlgItem(hDlg, IDS_CSM_HELP_TXT))
 			return FALSE;
@@ -2794,6 +2800,7 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		switch (((LPNMHDR)lParam)->code) {
 		case TTN_GETDISPINFO:
 			lpttt = (LPTOOLTIPTEXT)lParam;
+			
 			switch (lpttt->hdr.idFrom) {
 			case IDC_ABOUT:
 				utf8_to_wchar_no_alloc(lmprintf(MSG_302), wtooltip, ARRAYSIZE(wtooltip));
@@ -2806,6 +2813,7 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 			case IDC_LANG:
 				utf8_to_wchar_no_alloc(lmprintf(MSG_273), wtooltip, ARRAYSIZE(wtooltip));
 				lpttt->lpszText = wtooltip;
+
 				break;
 			case IDC_LOG:
 				utf8_to_wchar_no_alloc(lmprintf(MSG_303), wtooltip, ARRAYSIZE(wtooltip));
@@ -2820,7 +2828,9 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 				lpttt->lpszText = wtooltip;
 				break;
 			}
+			
 			break;
+
 		case BCN_DROPDOWN:
 			pDropDown = (LPNMBCDROPDOWN)lParam;
 			Point.x = pDropDown->rcButton.left;
@@ -2829,6 +2839,10 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 			hMenu = CreatePopupMenu();
 			InsertMenuU(hMenu, -1, MF_BYPOSITION | ((select_index == 0) ? MF_CHECKED : 0), IDM_SELECT, uppercase_select[0]);
 			InsertMenuU(hMenu, -1, MF_BYPOSITION | ((select_index == 1) ? MF_CHECKED : 0), IDM_DOWNLOAD, uppercase_select[1]);
+			if (IsAppsUseDarkMode())
+			{
+				SetMenuOwnerDrawn(hMenu);
+			}
 			TrackPopupMenuEx(hMenu, TPM_LEFTALIGN | TPM_TOPALIGN, Point.x, Point.y, hMainDialog, NULL);
 			DestroyMenu(hMenu);
 			break;

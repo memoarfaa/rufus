@@ -47,6 +47,7 @@ jobs:
         update: true
         install: >-
           mingw-w64-${{ matrix.env }}-toolchain
+          mingw-w64-${{ matrix.env }}-lld
           base-devel
           autotools
           git

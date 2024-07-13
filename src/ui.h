@@ -20,7 +20,7 @@
 #include <windows.h>
 #include <stdint.h>
 #include "resource.h"
-#include "localization.h"rufus.com
+#include "localization.h"
 
 #include<Uxtheme.h>
 #include<vsstyle.h>
